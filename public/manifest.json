@@ -1,0 +1,16 @@
+{
+  "name": "JelBarber Studio",
+  "short_name": "JelBarber",
+  "description": "ระบบบริหารจัดการร้านตัดผม",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1b1712",
+  "theme_color": "#d9b46c",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
