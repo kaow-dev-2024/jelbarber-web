@@ -49,6 +49,7 @@ export default function InventoryPage() {
     <EntityManager
       title="คลังสินค้า"
       endpoint="inventory"
+      enableExport
       columns={[
         { key: 'id', label: 'ID' },
         {

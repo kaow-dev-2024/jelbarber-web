@@ -32,7 +32,7 @@ import {
   useMediaQuery
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { Add, Delete, Edit, Refresh } from '@mui/icons-material';
+import { Add, Delete, Edit, Refresh, FileDownload, PictureAsPdf } from '@mui/icons-material';
 import { createEntity, deleteEntity, listEntities, updateEntity } from '@/lib/api';
 import { useAuth } from '@/components/auth/AuthProvider';
 
@@ -62,6 +62,7 @@ export type FieldConfig = {
   step?: string;
   showOn?: 'create' | 'edit' | 'both';
   sendNullWhenEmpty?: boolean;
+  grid?: { xs?: number; md?: number };
 };
 
 export type ColumnConfig = {
@@ -94,6 +95,15 @@ export type EntityManagerProps = {
   summary?: (rows: Record<string, unknown>[]) => React.ReactNode;
   defaultFormValues?: Record<string, unknown>;
   searchKeys?: string[];
+  accentColor?: string;
+  formHeader?: React.ReactNode;
+  exportMeta?: {
+    title?: string;
+    subtitle?: string;
+    logoUrl?: string;
+    accentColor?: string;
+  };
+  enableExport?: boolean;
 };
 
 function formatDateTime(value: unknown) {
@@ -162,7 +172,11 @@ export default function EntityManager({
   sortOrder = 'desc',
   summary,
   defaultFormValues = {},
-  searchKeys = []
+  searchKeys = [],
+  accentColor,
+  formHeader,
+  exportMeta,
+  enableExport = true
 }: EntityManagerProps) {
   const LAZY_PAGE_SIZE = 20;
   const API_LIMIT = 100;
@@ -432,21 +446,1009 @@ export default function EntityManager({
     [sortedRows, visibleCount]
   );
 
+  const formatExportValue = (value: unknown) => {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'boolean') return value ? 'ใช่' : 'ไม่';
+    if (value instanceof Date) return formatDateTime(value.toISOString());
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      const candidate =
+        record.name ?? record.title ?? record.email ?? record.phone ?? record.id ?? null;
+      if (candidate !== null && candidate !== undefined) return String(candidate);
+      try {
+        return JSON.stringify(record);
+      } catch {
+        return String(value);
+      }
+    }
+    const text = String(value);
+    if (text.match(/\d{4}-\d{2}-\d{2}T/)) {
+      return formatDateTime(text);
+    }
+    return text;
+  };
+
+  const buildExportData = () => {
+    const headers = columns.map((column) => column.label);
+    const keys = columns.map((column) => column.key);
+    const rows = filteredRows.map((row) => keys.map((key) => formatExportValue(row[key])));
+    return { headers, rows };
+  };
+
+  const handleExportExcel = async () => {
+    const { headers, rows } = buildExportData();
+    const XLSX = await import('xlsx');
+    const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Export');
+    const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${endpoint}-export.xlsx`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportPdf = () => {
+    const { headers, rows } = buildExportData();
+    const exportTitle = exportMeta?.title || 'JelBarber Studio';
+    const exportSubtitle = exportMeta?.subtitle || title;
+    const exportAccent = exportMeta?.accentColor || accentColor || '#D9B46C';
+    const logoUrl = exportMeta?.logoUrl || '/icons/icon-pwa.png';
+    const exportNavy = '#0f1f3d';
+    const exportGold = exportAccent;
+    const exportGray = '#6b7280';
+    const exportLight = '#f5f5f5';
+    const dateFrom = filterValues['occurredAtFrom'];
+    const dateTo = filterValues['occurredAtTo'];
+    const dateRangeText =
+      dateFrom || dateTo
+        ? `${dateFrom ? String(dateFrom) : '-'} ถึง ${dateTo ? String(dateTo) : '-'}`
+        : 'ทั้งหมด';
+    const nowText = new Date().toLocaleString('th-TH');
+
+    const escapeHtml = (value: string) =>
+      value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const exportLogoHtml = logoUrl
+      ? `<img src="${escapeHtml(logoUrl)}" alt="logo" style="width:48px;height:48px;border-radius:8px;border:1px solid #ddd;" />`
+      : '';
+
+    if (endpoint === 'branches') {
+      const statusLabel = (value: unknown) => (value ? 'Active' : 'Inactive');
+      const statusClass = (value: unknown) => (value ? 'status-active' : 'status-inactive');
+
+      const html = `
+        <!doctype html>
+        <html lang="th">
+          <head>
+            <meta charset="utf-8" />
+            <title>${escapeHtml(exportTitle)} Export</title>
+            <style>
+              body { font-family: Arial, sans-serif; padding: 24px; color: #111; background: #f7f7f8; }
+              .topbar { background: #0f1f3d; color: white; padding: 16px; border-radius: 8px; }
+              h1 { font-size: 18px; margin: 0; color: ${escapeHtml(exportAccent)}; }
+              .subtitle { font-size: 12px; color: #cbd5e1; margin-top: 4px; }
+              .header { display: flex; gap: 12px; align-items: center; }
+              .meta { display: flex; justify-content: space-between; margin-top: 12px; font-size: 12px; color: #e5e7eb; }
+              .branch-card { background: white; border-radius: 10px; padding: 12px; border: 1px solid #e5e7eb; margin-top: 12px; }
+              .section { margin-top: 10px; padding-top: 10px; border-top: 1px solid ${escapeHtml(exportAccent)}33; }
+              .section-title { font-size: 12px; font-weight: 700; color: #0f1f3d; margin-bottom: 6px; }
+              .label { font-size: 11px; color: #6b7280; }
+              .value { font-size: 13px; font-weight: 600; }
+              .status { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+              .status-active { background: #dcfce7; color: #166534; }
+              .status-inactive { background: #e5e7eb; color: #374151; }
+              .meta-text { font-size: 10px; color: #9ca3af; }
+              .danger { color: #b91c1c; font-weight: 700; }
+            </style>
+          </head>
+          <body>
+            <div class="topbar">
+              <div class="header">
+                ${exportLogoHtml}
+                <div>
+                  <h1>${escapeHtml(exportTitle)}</h1>
+                  ${exportSubtitle ? `<div class="subtitle">${escapeHtml(exportSubtitle)}</div>` : ''}
+                </div>
+              </div>
+              <div class="meta">
+                <div>จำนวนสาขา: ${filteredRows.length}</div>
+                <div>พิมพ์เมื่อ: ${escapeHtml(nowText)}</div>
+              </div>
+            </div>
+
+            ${filteredRows
+              .map((row) => {
+                const name = String(row.name || '-');
+                const address = String(row.address || '-');
+                const phone = String(row.phone || '-');
+                const id = String(row.id ?? '-');
+                const createdAt = String(row.createdAt ?? '-');
+                const updatedAt = String(row.updatedAt ?? '-');
+                const status = statusLabel(row.isActive);
+                const statusCls = statusClass(row.isActive);
+                return `
+                  <div class="branch-card">
+                    <div class="value">${escapeHtml(name)}</div>
+                    <div class="label">Branch ID: ${escapeHtml(id)}</div>
+                    <div class="section">
+                      <div class="section-title">สถานะสาขา</div>
+                      <div class="value"><span class="status ${statusCls}">${escapeHtml(status)}</span></div>
+                    </div>
+                    <div class="section">
+                      <div class="section-title">Contact Information</div>
+                      <div class="label">ที่อยู่</div>
+                      <div class="value">${escapeHtml(address)}</div>
+                      <div class="label">เบอร์โทร</div>
+                      <div class="value">${escapeHtml(phone)}</div>
+                    </div>
+                    <div class="section">
+                      <div class="section-title">System Metadata</div>
+                      <div class="meta-text">createdAt: ${escapeHtml(createdAt)}</div>
+                      <div class="meta-text">updatedAt: ${escapeHtml(updatedAt)}</div>
+                      <div class="meta-text">Admin Control: <span class="danger">ปิดสาขา / ลบสาขา</span></div>
+                    </div>
+                  </div>
+                `;
+              })
+              .join('')}
+          </body>
+        </html>
+      `;
+
+      const win = window.open('', '_blank');
+      if (!win) return;
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 250);
+      return;
+    }
+
+    if (endpoint === 'inventory') {
+      const statusClass = (quantity: number) => {
+        if (quantity <= 5) return 'stock-low';
+        if (quantity <= 15) return 'stock-warning';
+        return 'stock-ok';
+      };
+
+      const html = `
+        <!doctype html>
+        <html lang="th">
+          <head>
+            <meta charset="utf-8" />
+            <title>${escapeHtml(exportTitle)} Export</title>
+            <style>
+              body { font-family: Arial, sans-serif; padding: 24px; color: #111; background: #f7f7f8; }
+              .topbar { background: #0f1f3d; color: white; padding: 16px; border-radius: 8px; }
+              h1 { font-size: 18px; margin: 0; color: ${escapeHtml(exportAccent)}; }
+              .subtitle { font-size: 12px; color: #cbd5e1; margin-top: 4px; }
+              .header { display: flex; gap: 12px; align-items: center; }
+              .meta { display: flex; justify-content: space-between; margin-top: 12px; font-size: 12px; color: #e5e7eb; }
+              .stock-card { background: white; border-radius: 12px; padding: 14px; border: 1px solid #e5e7eb; margin-top: 12px; }
+              .primary { display: flex; justify-content: space-between; gap: 12px; }
+              .name { font-size: 16px; font-weight: 700; }
+              .qty { font-size: 18px; font-weight: 700; }
+              .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+              .stock-ok { background: #dcfce7; color: #166534; }
+              .stock-warning { background: #fef9c3; color: #854d0e; }
+              .stock-low { background: #fee2e2; color: #991b1b; }
+              .section { margin-top: 10px; padding-top: 10px; border-top: 1px solid ${escapeHtml(exportAccent)}33; }
+              .section-title { font-size: 12px; font-weight: 700; color: #0f1f3d; margin-bottom: 6px; }
+              .label { font-size: 11px; color: #6b7280; }
+              .value { font-size: 13px; font-weight: 600; }
+              .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+              .meta-text { font-size: 10px; color: #9ca3af; }
+              .total { font-size: 14px; font-weight: 700; color: #0f1f3d; }
+            </style>
+          </head>
+          <body>
+            <div class="topbar">
+              <div class="header">
+                ${exportLogoHtml}
+                <div>
+                  <h1>${escapeHtml(exportTitle)}</h1>
+                  ${exportSubtitle ? `<div class="subtitle">${escapeHtml(exportSubtitle)}</div>` : ''}
+                </div>
+              </div>
+              <div class="meta">
+                <div>จำนวนสินค้า: ${filteredRows.length}</div>
+                <div>พิมพ์เมื่อ: ${escapeHtml(nowText)}</div>
+              </div>
+            </div>
+
+            ${filteredRows
+              .map((row) => {
+                const name = String(row.name || '-');
+                const sku = String(row.sku || '-');
+                const unit = String(row.unit || '-');
+                const quantityRaw = row.quantity;
+                const quantity = typeof quantityRaw === 'number' ? quantityRaw : Number(quantityRaw);
+                const costRaw = row.cost;
+                const cost = typeof costRaw === 'number' ? costRaw : Number(costRaw);
+                const total = !Number.isNaN(quantity) && !Number.isNaN(cost) ? quantity * cost : 0;
+                const branch = String(row.branch?.name ?? row.Branch?.name ?? row.branchId ?? row.BranchId ?? '-');
+                const createdAt = String(row.createdAt ?? '-');
+                const updatedAt = String(row.updatedAt ?? '-');
+                const qtyClass = statusClass(Number.isNaN(quantity) ? 0 : quantity);
+                return `
+                  <div class="stock-card">
+                    <div class="primary">
+                      <div>
+                        <div class="name">${escapeHtml(name)}</div>
+                        <div class="label mono">SKU: ${escapeHtml(sku)}</div>
+                        <div class="label">สาขา: ${escapeHtml(branch)}</div>
+                      </div>
+                      <div style="text-align:right;">
+                        <div class="qty">${Number.isNaN(quantity) ? '-' : quantity} ${escapeHtml(unit)}</div>
+                        <div class="badge ${qtyClass}">สถานะสต็อก</div>
+                      </div>
+                    </div>
+
+                    <div class="section">
+                      <div class="section-title">Stock Information</div>
+                      <div class="label">จำนวนคงเหลือ</div>
+                      <div class="value">${Number.isNaN(quantity) ? '-' : quantity} ${escapeHtml(unit)}</div>
+                      <div class="label">มูลค่าสต็อกรวม</div>
+                      <div class="total">${total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท</div>
+                    </div>
+
+                    <div class="section">
+                      <div class="section-title">Cost Information</div>
+                      <div class="label">ต้นทุนต่อหน่วย</div>
+                      <div class="value">${Number.isNaN(cost) ? '-' : cost.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท</div>
+                    </div>
+
+                    <div class="section">
+                      <div class="section-title">System Metadata</div>
+                      <div class="meta-text">createdAt: ${escapeHtml(createdAt)}</div>
+                      <div class="meta-text">updatedAt: ${escapeHtml(updatedAt)}</div>
+                      <div class="meta-text">Stock Movement: ➕ รับเข้า · ➖ ตัดออก · 🔄 ปรับปรุง</div>
+                    </div>
+                  </div>
+                `;
+              })
+              .join('')}
+          </body>
+        </html>
+      `;
+
+      const win = window.open('', '_blank');
+      if (!win) return;
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 250);
+      return;
+    }
+
+    if (endpoint === 'users') {
+      const roleLabel = (value: unknown) => {
+        const v = String(value || '').toLowerCase();
+        if (v === 'admin') return 'Admin';
+        if (v === 'manager') return 'Manager';
+        if (v === 'employee') return 'Employee';
+        return String(value || '-');
+      };
+      const roleClass = (value: unknown) => {
+        const v = String(value || '').toLowerCase();
+        if (v === 'admin') return 'role-admin';
+        if (v === 'manager') return 'role-manager';
+        return 'role-employee';
+      };
+      const statusLabel = (value: unknown) => (value ? 'Active' : 'Inactive');
+      const statusClass = (value: unknown) => (value ? 'status-active' : 'status-inactive');
+      const branchLabel = (row: Record<string, unknown>) => {
+        const embedded = row.Branch as Record<string, unknown> | undefined;
+        if (embedded && typeof embedded === 'object') {
+          return (
+            String(
+              embedded.name ||
+                embedded.title ||
+                embedded.email ||
+                embedded.phone ||
+                embedded.id ||
+                ''
+            ) || '-'
+          );
+        }
+        const branchId = row.branchId ?? row.BranchId;
+        if (branchId === null || branchId === undefined || branchId === '') {
+          return 'สิทธิ์ทุกสาขา (Global Access)';
+        }
+        return String(branchId);
+      };
+
+      const html = `
+        <!doctype html>
+        <html lang="th">
+          <head>
+            <meta charset="utf-8" />
+            <title>${escapeHtml(exportTitle)} Export</title>
+            <style>
+              body { font-family: Arial, sans-serif; padding: 24px; color: #111; background: #f7f7f8; }
+              .topbar { background: #0f1f3d; color: white; padding: 16px; border-radius: 8px; }
+              h1 { font-size: 18px; margin: 0; color: ${escapeHtml(exportAccent)}; }
+              .subtitle { font-size: 12px; color: #cbd5e1; margin-top: 4px; }
+              .header { display: flex; gap: 12px; align-items: center; }
+              .meta { display: flex; justify-content: space-between; margin-top: 12px; font-size: 12px; color: #e5e7eb; }
+              .user-card { background: white; border-radius: 10px; padding: 12px; border: 1px solid #e5e7eb; margin-top: 12px; }
+              .row { display: flex; justify-content: space-between; gap: 12px; }
+              .section { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e5e7eb; }
+              .section-title { font-size: 12px; font-weight: 700; color: #0f1f3d; margin-bottom: 6px; }
+              .label { font-size: 11px; color: #6b7280; }
+              .value { font-size: 13px; font-weight: 600; }
+              .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+              .role-admin { background: #dbeafe; color: #1e3a8a; }
+              .role-manager { background: #dcfce7; color: #166534; }
+              .role-employee { background: #e5e7eb; color: #1f2937; }
+              .status-active { background: #dcfce7; color: #166534; }
+              .status-inactive { background: #e5e7eb; color: #374151; }
+              .meta-text { font-size: 10px; color: #9ca3af; }
+              .danger { color: #b91c1c; font-weight: 700; }
+            </style>
+          </head>
+          <body>
+            <div class="topbar">
+              <div class="header">
+                ${exportLogoHtml}
+                <div>
+                  <h1>${escapeHtml(exportTitle)}</h1>
+                  ${exportSubtitle ? `<div class="subtitle">${escapeHtml(exportSubtitle)}</div>` : ''}
+                </div>
+              </div>
+              <div class="meta">
+                <div>จำนวนผู้ใช้: ${filteredRows.length}</div>
+                <div>พิมพ์เมื่อ: ${escapeHtml(nowText)}</div>
+              </div>
+            </div>
+
+            ${filteredRows
+              .map((row) => {
+                const name = String(row.name || '-');
+                const email = String(row.email || '-');
+                const phone = String(row.phone || '-');
+                const role = roleLabel(row.role);
+                const roleCls = roleClass(row.role);
+                const status = statusLabel(row.isActive);
+                const statusCls = statusClass(row.isActive);
+                const branch = branchLabel(row);
+                const id = String(row.id ?? '-');
+                const createdAt = String(row.createdAt ?? '-');
+                const updatedAt = String(row.updatedAt ?? '-');
+                return `
+                  <div class="user-card">
+                    <div class="row">
+                      <div>
+                        <div class="value">${escapeHtml(name)}</div>
+                        <div class="label">${escapeHtml(email)}</div>
+                      </div>
+                      <div>
+                        <span class="badge ${roleCls}">${escapeHtml(role)}</span>
+                        <span class="badge ${statusCls}" style="margin-left:6px;">${escapeHtml(status)}</span>
+                      </div>
+                    </div>
+
+                    <div class="section">
+                      <div class="section-title">User Identity</div>
+                      <div class="label">ชื่อ</div>
+                      <div class="value">${escapeHtml(name)}</div>
+                      <div class="label">อีเมล (Login)</div>
+                      <div class="value">${escapeHtml(email)}</div>
+                      <div class="label">เบอร์โทร</div>
+                      <div class="value">${escapeHtml(phone)}</div>
+                    </div>
+
+                    <div class="section">
+                      <div class="section-title">Access Control</div>
+                      <div class="label">Role</div>
+                      <div class="value"><span class="badge ${roleCls}">${escapeHtml(role)}</span></div>
+                      <div class="label">สาขาที่ผูก</div>
+                      <div class="value">${escapeHtml(branch)}</div>
+                      <div class="label">สถานะการใช้งาน</div>
+                      <div class="value"><span class="badge ${statusCls}">${escapeHtml(status)}</span></div>
+                      <div class="label">Admin-only Controls</div>
+                      <div class="meta-text">Reset Password · Force Logout · <span class="danger">Deactivate Account</span></div>
+                    </div>
+
+                    <div class="section">
+                      <div class="section-title">System Metadata</div>
+                      <div class="meta-text">User ID: ${escapeHtml(id)}</div>
+                      <div class="meta-text">createdAt: ${escapeHtml(createdAt)}</div>
+                      <div class="meta-text">updatedAt: ${escapeHtml(updatedAt)}</div>
+                    </div>
+                  </div>
+                `;
+              })
+              .join('')}
+          </body>
+        </html>
+      `;
+
+      const win = window.open('', '_blank');
+      if (!win) return;
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 250);
+      return;
+    }
+
+    if (endpoint === 'appointments') {
+      const labelStatus = (value: unknown) => {
+        const v = String(value || '');
+        if (v === 'Booked') return 'Booked';
+        if (v === 'Successful') return 'Successful';
+        if (v === 'Cancelled') return 'Cancelled';
+        return v || '-';
+      };
+      const statusClass = (value: unknown) => {
+        const v = String(value || '');
+        if (v === 'Booked') return 'status-booked';
+        if (v === 'Successful') return 'status-success';
+        if (v === 'Cancelled') return 'status-cancel';
+        return 'status-default';
+      };
+      const labelPerson = (row: Record<string, unknown>, key: string) => {
+        const embedded = row[key] as Record<string, unknown> | undefined;
+        if (embedded && typeof embedded === 'object') {
+          return (
+            String(
+              embedded.name ||
+                embedded.title ||
+                embedded.email ||
+                embedded.phone ||
+                embedded.id ||
+                ''
+            ) || '-'
+          );
+        }
+        const alt = row[`${key}Id` as keyof typeof row] ?? row[`${key.toLowerCase()}Id` as keyof typeof row];
+        return alt ? String(alt) : '-';
+      };
+      const labelBranch = (row: Record<string, unknown>) =>
+        labelPerson(row, 'Branch') || String(row.branchId ?? row.BranchId ?? '-');
+
+      const formatTimeRange = (row: Record<string, unknown>) => {
+        const start = row.startAt ? new Date(String(row.startAt)) : null;
+        const end = row.endAt ? new Date(String(row.endAt)) : null;
+        const formatTime = (date: Date | null) =>
+          date && !Number.isNaN(date.getTime())
+            ? date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+            : '-';
+        return `${formatTime(start)}–${formatTime(end)}`;
+      };
+
+      const byBranch = new Map<string, Record<string, unknown>[]>();
+      filteredRows.forEach((row) => {
+        const branch = labelBranch(row);
+        if (!byBranch.has(branch)) byBranch.set(branch, []);
+        byBranch.get(branch)!.push(row);
+      });
+
+      const branchSections = Array.from(byBranch.entries())
+        .sort(([a], [b]) => (a > b ? 1 : -1))
+        .map(([branch, items]) => {
+          const sorted = items.slice().sort((a, b) => {
+            const aTime = new Date(String(a.startAt)).getTime();
+            const bTime = new Date(String(b.startAt)).getTime();
+            return aTime - bTime;
+          });
+          const rowsHtml = sorted
+            .map((row) => {
+              const customer = labelPerson(row, 'Member');
+              const employee = labelPerson(row, 'Employee');
+              const service = String(row.notes || '-');
+              const status = labelStatus(row.status);
+              const statusCls = statusClass(row.status);
+              const timeRange = formatTimeRange(row);
+              const audit = `ID: ${row.id ?? '-'} | สร้าง: ${row.createdAt ?? '-'} | อัปเดต: ${
+                row.updatedAt ?? '-'
+              }`;
+              return `
+                <div class="booking-row">
+                  <div class="time">${timeRange}</div>
+                  <div class="main">
+                    <div class="primary">${customer} · ${employee}</div>
+                    <div class="secondary">${service}</div>
+                  </div>
+                  <div class="branch">${branch}</div>
+                  <div class="status ${statusCls}">${status}</div>
+                  <div class="audit">${audit}</div>
+                </div>
+              `;
+            })
+            .join('');
+          return `
+            <div class="branch-section">
+              <div class="branch-title">${branch}</div>
+              ${rowsHtml || '<div class="empty">ไม่มีข้อมูล</div>'}
+            </div>
+          `;
+        })
+        .join('');
+
+      const summarizeBy = (key: (row: Record<string, unknown>) => string) => {
+        const map = new Map<string, { total: number; booked: number; success: number; cancel: number }>();
+        filteredRows.forEach((row) => {
+          const k = key(row) || '-';
+          if (!map.has(k)) map.set(k, { total: 0, booked: 0, success: 0, cancel: 0 });
+          const bucket = map.get(k)!;
+          bucket.total += 1;
+          if (String(row.status) === 'Booked') bucket.booked += 1;
+          if (String(row.status) === 'Successful') bucket.success += 1;
+          if (String(row.status) === 'Cancelled') bucket.cancel += 1;
+        });
+        return Array.from(map.entries()).map(([k, v]) => ({
+          key: k,
+          ...v,
+          cancelRate: v.total ? (v.cancel / v.total) * 100 : 0
+        }));
+      };
+
+      const summaryByBranch = summarizeBy((row) => labelBranch(row));
+      const summaryByEmployee = summarizeBy((row) => labelPerson(row, 'Employee'));
+      const summaryByService = summarizeBy((row) => String(row.notes || '-'));
+
+      const groupByMonth = () => {
+        const map = new Map<string, { total: number; cancel: number }>();
+        filteredRows.forEach((row) => {
+          const date = new Date(String(row.startAt));
+          if (Number.isNaN(date.getTime())) return;
+          const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+          if (!map.has(key)) map.set(key, { total: 0, cancel: 0 });
+          const bucket = map.get(key)!;
+          bucket.total += 1;
+          if (String(row.status) === 'Cancelled') bucket.cancel += 1;
+        });
+        return Array.from(map.entries()).map(([k, v]) => ({
+          key: k,
+          total: v.total,
+          cancelRate: v.total ? (v.cancel / v.total) * 100 : 0
+        }));
+      };
+
+      const monthSummary = groupByMonth();
+
+      const renderSummaryTable = (
+        titleText: string,
+        rows: { key: string; total: number; booked?: number; success?: number; cancel?: number; cancelRate?: number }[]
+      ) => {
+        const body = rows
+          .map(
+            (row, index) => `
+            <tr class="${index % 2 === 0 ? 'zebra' : ''}">
+              <td>${escapeHtml(row.key)}</td>
+              <td>${row.total}</td>
+              ${row.booked !== undefined ? `<td>${row.booked}</td>` : ''}
+              ${row.success !== undefined ? `<td>${row.success}</td>` : ''}
+              ${row.cancel !== undefined ? `<td>${row.cancel}</td>` : ''}
+              ${row.cancelRate !== undefined ? `<td>${row.cancelRate.toFixed(1)}%</td>` : ''}
+            </tr>`
+          )
+          .join('');
+        return `
+          <div class="section">
+            <div class="section-title">${escapeHtml(titleText)}</div>
+            <table class="summary-table">
+              <thead>
+                <tr>
+                  <th>รายการ</th>
+                  <th>จำนวนคิว</th>
+                  ${rows.length && rows[0].booked !== undefined ? '<th>Booked</th>' : ''}
+                  ${rows.length && rows[0].success !== undefined ? '<th>Successful</th>' : ''}
+                  ${rows.length && rows[0].cancel !== undefined ? '<th>Cancelled</th>' : ''}
+                  ${rows.length && rows[0].cancelRate !== undefined ? '<th>% ยกเลิก</th>' : ''}
+                </tr>
+              </thead>
+              <tbody>${body || '<tr><td colspan="6">ไม่มีข้อมูล</td></tr>'}</tbody>
+            </table>
+          </div>
+        `;
+      };
+
+      const html = `
+        <!doctype html>
+        <html lang="th">
+          <head>
+            <meta charset="utf-8" />
+            <title>${escapeHtml(exportTitle)} Export</title>
+            <style>
+              body { font-family: Arial, sans-serif; padding: 24px; color: #111; background: #f7f7f8; }
+              .topbar { background: #0f1f3d; color: white; padding: 16px; border-radius: 8px; }
+              h1 { font-size: 18px; margin: 0; color: ${escapeHtml(exportAccent)}; }
+              .subtitle { font-size: 12px; color: #cbd5e1; margin-top: 4px; }
+              .header { display: flex; gap: 12px; align-items: center; }
+              .meta { display: flex; justify-content: space-between; margin-top: 12px; font-size: 12px; color: #e5e7eb; }
+              .section { margin-top: 16px; background: white; border-radius: 10px; padding: 12px; border: 1px solid #e5e7eb; }
+              .section-title { font-size: 13px; font-weight: 700; color: #0f1f3d; margin-bottom: 8px; }
+              .branch-title { font-size: 12px; font-weight: 700; color: #0f1f3d; margin: 8px 0; }
+              .booking-row { display: grid; grid-template-columns: 110px 1.5fr 1fr 120px; gap: 10px; padding: 8px 0; border-bottom: 1px dashed #e5e7eb; }
+              .booking-row:last-child { border-bottom: none; }
+              .time { font-weight: 700; color: #111827; }
+              .primary { font-weight: 600; }
+              .secondary { color: #6b7280; font-size: 12px; }
+              .branch { color: #374151; font-size: 12px; }
+              .status { text-align: center; font-weight: 700; border-radius: 999px; padding: 4px 8px; font-size: 12px; align-self: start; }
+              .status-booked { background: #e5e7eb; color: #1f2937; }
+              .status-success { background: #dcfce7; color: #166534; }
+              .status-cancel { background: #fee2e2; color: #991b1b; }
+              .status-default { background: #e5e7eb; color: #1f2937; }
+              .audit { grid-column: 2 / -1; font-size: 11px; color: #9ca3af; }
+              .summary-table { width: 100%; border-collapse: collapse; }
+              .summary-table th, .summary-table td { border: 1px solid #e5e7eb; padding: 8px; font-size: 12px; text-align: left; }
+              .summary-table th { background: #0f1f3d; color: white; }
+              .zebra { background: #f9fafb; }
+              .empty { color: #9ca3af; font-size: 12px; padding: 8px 0; }
+            </style>
+          </head>
+          <body>
+            <div class="topbar">
+              <div class="header">
+                ${exportLogoHtml}
+                <div>
+                  <h1>${escapeHtml(exportTitle)}</h1>
+                  ${exportSubtitle ? `<div class="subtitle">${escapeHtml(exportSubtitle)}</div>` : ''}
+                </div>
+              </div>
+              <div class="meta">
+                <div>ช่วงข้อมูล: ${escapeHtml(dateRangeText)}</div>
+                <div>พิมพ์เมื่อ: ${escapeHtml(nowText)}</div>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">คิวนัดหมาย (เรียงตามเวลา)</div>
+              ${branchSections}
+            </div>
+
+            ${renderSummaryTable('สรุปต่อสาขา', summaryByBranch)}
+            ${renderSummaryTable('สรุปตามช่าง', summaryByEmployee)}
+            ${renderSummaryTable('สรุปตามบริการ', summaryByService)}
+            ${renderSummaryTable('แนวโน้มรายเดือน', monthSummary)}
+          </body>
+        </html>
+      `;
+
+      const win = window.open('', '_blank');
+      if (!win) return;
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 250);
+      return;
+    }
+    const baseHeaders = headers.slice();
+    const addColIfMissing = (key: string, label: string) => {
+      if (!baseHeaders.includes(label)) baseHeaders.push(label);
+    };
+    addColIfMissing('paymentMethod', 'ช่องทางรับ/จ่าย');
+    addColIfMissing('vat', 'VAT 7%');
+    addColIfMissing('totalWithVat', 'รวม VAT');
+
+    const labelType = (value: unknown) => {
+      const v = String(value || '').toLowerCase();
+      if (v === 'income') return 'รายรับ';
+      if (v === 'expense') return 'รายจ่าย';
+      return String(value || '-');
+    };
+    const labelPayment = (value: unknown) => {
+      const v = String(value || '').toLowerCase();
+      if (v === 'cash') return 'เงินสด';
+      if (v === 'transfer') return 'โอน';
+      if (v === 'qr') return 'QR';
+      return String(value || '-');
+    };
+
+    const dataRows = filteredRows.map((row) => {
+      const rowMap: Record<string, string> = {};
+      columns.forEach((column) => {
+        const raw = row[column.key];
+        let value = formatExportValue(raw);
+        if (column.key === 'type') value = labelType(raw);
+        rowMap[column.label] = value;
+      });
+      const amountRaw = row.amount;
+      const amount = typeof amountRaw === 'number' ? amountRaw : Number(amountRaw);
+      const vatRaw = row.vat ?? 7;
+      const vat = typeof vatRaw === 'number' ? vatRaw : Number(vatRaw);
+      const vatValue = !Number.isNaN(amount) ? (amount * (Number.isNaN(vat) ? 7 : vat)) / 100 : 0;
+      const totalWithVat = !Number.isNaN(amount) ? amount + vatValue : 0;
+
+      rowMap['ช่องทางรับ/จ่าย'] = labelPayment(row.paymentMethod ?? row.payment_method ?? '');
+      rowMap['VAT 7%'] = Number.isNaN(vatValue) ? '-' : vatValue.toFixed(2);
+      rowMap['รวม VAT'] = Number.isNaN(totalWithVat) ? '-' : totalWithVat.toFixed(2);
+      return baseHeaders.map((header) => rowMap[header] ?? '');
+    });
+
+    const headerHtml = baseHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('');
+    const bodyHtml = dataRows
+      .map(
+        (row, index) =>
+          `<tr class="${index % 2 === 0 ? 'zebra' : ''}">${row
+            .map((cell) => `<td>${escapeHtml(cell)}</td>`)
+            .join('')}</tr>`
+      )
+      .join('');
+    const sumBy = <T extends string>(
+      key: (row: Record<string, unknown>) => string,
+      isIncome: (row: Record<string, unknown>) => boolean
+    ) => {
+      const map = new Map<string, { income: number; expense: number }>();
+      filteredRows.forEach((row) => {
+        const k = key(row) || '-';
+        const amountRaw = row.amount;
+        const amount = typeof amountRaw === 'number' ? amountRaw : Number(amountRaw);
+        if (Number.isNaN(amount)) return;
+        if (!map.has(k)) map.set(k, { income: 0, expense: 0 });
+        const bucket = map.get(k)!;
+        if (isIncome(row)) bucket.income += amount;
+        else bucket.expense += amount;
+      });
+      return Array.from(map.entries()).map(([k, v]) => ({
+        key: k,
+        income: v.income,
+        expense: v.expense,
+        net: v.income - v.expense
+      }));
+    };
+
+    const summaryByPayment = sumBy(
+      (row) => labelPayment(row.paymentMethod ?? row.payment_method ?? ''),
+      (row) => String(row.type) === 'income'
+    );
+    const summaryByBranch = sumBy(
+      (row) => formatExportValue(row.branch?.name ?? row.Branch?.name ?? row.branchId ?? row.BranchId),
+      (row) => String(row.type) === 'income'
+    );
+
+    const groupByPeriod = (mode: 'day' | 'month' | 'year') => {
+      const map = new Map<string, { income: number; expense: number; count: number }>();
+      filteredRows.forEach((row) => {
+        const date = new Date(String(row.occurredAt));
+        if (Number.isNaN(date.getTime())) return;
+        const yyyy = date.getFullYear();
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const dd = String(date.getDate()).padStart(2, '0');
+        const key = mode === 'year' ? `${yyyy}` : mode === 'month' ? `${yyyy}-${mm}` : `${yyyy}-${mm}-${dd}`;
+        if (!map.has(key)) map.set(key, { income: 0, expense: 0, count: 0 });
+        const bucket = map.get(key)!;
+        const amountRaw = row.amount;
+        const amount = typeof amountRaw === 'number' ? amountRaw : Number(amountRaw);
+        if (Number.isNaN(amount)) return;
+        bucket.count += 1;
+        if (String(row.type) === 'income') bucket.income += amount;
+        if (String(row.type) === 'expense') bucket.expense += amount;
+      });
+      return Array.from(map.entries())
+        .sort(([a], [b]) => (a > b ? 1 : -1))
+        .map(([key, value]) => ({
+          key,
+          ...value,
+          net: value.income - value.expense
+        }));
+    };
+
+    const daily = groupByPeriod('day');
+    const monthly = groupByPeriod('month');
+    const yearly = groupByPeriod('year');
+
+    const renderSummaryTable = (titleText: string, rows: { key: string; income: number; expense: number; net: number; count?: number }[]) => {
+      const body = rows
+        .map(
+          (row, index) => `
+          <tr class="${index % 2 === 0 ? 'zebra' : ''}">
+            <td>${escapeHtml(row.key)}</td>
+            ${row.count !== undefined ? `<td>${row.count}</td>` : ''}
+            <td>${row.income.toFixed(2)}</td>
+            <td>${row.expense.toFixed(2)}</td>
+            <td class="${row.net >= 0 ? 'pos' : 'neg'}">${row.net.toFixed(2)}</td>
+          </tr>`
+        )
+        .join('');
+      const countHeader = rows.length && rows[0].count !== undefined ? '<th>จำนวนรายการ</th>' : '';
+      return `
+        <div class="section">
+          <div class="section-title">${escapeHtml(titleText)}</div>
+          <table class="summary-table">
+            <thead>
+              <tr>
+                <th>ช่วงเวลา</th>
+                ${countHeader}
+                <th>รายรับ</th>
+                <th>รายจ่าย</th>
+                <th>สุทธิ</th>
+              </tr>
+            </thead>
+            <tbody>${body || '<tr><td colspan="5">ไม่มีข้อมูล</td></tr>'}</tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    const renderKeySummaryTable = (titleText: string, rows: { key: string; income: number; expense: number; net: number }[]) => {
+      const body = rows
+        .map(
+          (row, index) => `
+          <tr class="${index % 2 === 0 ? 'zebra' : ''}">
+            <td>${escapeHtml(row.key)}</td>
+            <td>${row.income.toFixed(2)}</td>
+            <td>${row.expense.toFixed(2)}</td>
+            <td class="${row.net >= 0 ? 'pos' : 'neg'}">${row.net.toFixed(2)}</td>
+          </tr>`
+        )
+        .join('');
+      return `
+        <div class="section">
+          <div class="section-title">${escapeHtml(titleText)}</div>
+          <table class="summary-table">
+            <thead>
+              <tr>
+                <th>รายการ</th>
+                <th>รายรับ</th>
+                <th>รายจ่าย</th>
+                <th>สุทธิ</th>
+              </tr>
+            </thead>
+            <tbody>${body || '<tr><td colspan="4">ไม่มีข้อมูล</td></tr>'}</tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    const sumAmount = (predicate: (row: Record<string, unknown>) => boolean) =>
+      filteredRows.reduce((sum, row) => {
+        if (!predicate(row)) return sum;
+        const amountRaw = row.amount;
+        const amount = typeof amountRaw === 'number' ? amountRaw : Number(amountRaw);
+        if (Number.isNaN(amount)) return sum;
+        return sum + amount;
+      }, 0);
+
+    const incomeTotal = sumAmount((row) => String(row.type) === 'income');
+    const expenseTotal = sumAmount((row) => String(row.type) === 'expense');
+    const netTotal = incomeTotal - expenseTotal;
+
+    const html = `
+      <!doctype html>
+      <html lang="th">
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtml(exportTitle)} Export</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
+            .topbar { background: ${exportNavy}; color: white; padding: 16px; border-radius: 8px; }
+            h1 { font-size: 18px; margin: 0; color: ${escapeHtml(exportGold)}; }
+            .subtitle { font-size: 12px; color: ${exportGray}; margin-top: 4px; }
+            .header { display: flex; gap: 12px; align-items: center; }
+            .meta { display: flex; justify-content: space-between; margin-top: 12px; font-size: 12px; color: #e5e7eb; }
+            .kpi { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 16px 0; }
+            .kpi-card { background: ${exportLight}; border-radius: 8px; padding: 12px; border: 1px solid #e5e7eb; }
+            .kpi-title { font-size: 12px; color: ${exportGray}; }
+            .kpi-value { font-size: 16px; font-weight: 700; }
+            .section { margin-top: 16px; }
+            .section-title { font-size: 13px; font-weight: 700; color: ${exportNavy}; margin-bottom: 8px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #e5e7eb; padding: 8px; font-size: 12px; vertical-align: top; }
+            th { background: #f3f4f6; text-align: left; }
+            .zebra { background: #fafafa; }
+            .summary-table th { background: ${exportNavy}; color: white; }
+            .pos { color: #0f8a5f; font-weight: 700; }
+            .neg { color: #b91c1c; font-weight: 700; }
+          </style>
+        </head>
+        <body>
+          <div class="topbar">
+            <div class="header">
+            ${exportLogoHtml}
+              <div>
+                <h1>${escapeHtml(exportTitle)}</h1>
+                ${exportSubtitle ? `<div class="subtitle">${escapeHtml(exportSubtitle)}</div>` : ''}
+              </div>
+            </div>
+            <div class="meta">
+              <div>ช่วงข้อมูล: ${escapeHtml(dateRangeText)}</div>
+              <div>พิมพ์เมื่อ: ${escapeHtml(nowText)}</div>
+            </div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-card">
+              <div class="kpi-title">รายรับรวม</div>
+              <div class="kpi-value pos">${incomeTotal.toFixed(2)}</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-title">รายจ่ายรวม</div>
+              <div class="kpi-value neg">${expenseTotal.toFixed(2)}</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-title">สุทธิ</div>
+              <div class="kpi-value">${netTotal.toFixed(2)}</div>
+            </div>
+          </div>
+          ${renderSummaryTable('สรุปรายวัน', daily)}
+          ${renderSummaryTable('สรุปรายเดือน', monthly)}
+          ${renderSummaryTable('สรุปรายปี', yearly)}
+          ${renderKeySummaryTable('สรุปตามช่องทางรับ/จ่าย', summaryByPayment)}
+          ${renderKeySummaryTable('สรุปตามสาขา', summaryByBranch)}
+          <table>
+            <thead><tr>${headerHtml}</tr></thead>
+            <tbody>${bodyHtml}</tbody>
+          </table>
+        </body>
+      </html>
+    `;
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 250);
+  };
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       <Paper sx={{ p: { xs: 2, md: 3 }, border: '1px solid rgba(255,255,255,0.08)' }}>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'stretch', md: 'center' }}>
           <Box sx={{ flex: 1 }}>
-            <Typography variant="h4">{title}</Typography>
+            <Typography variant="h4" sx={accentColor ? { color: accentColor } : undefined}>
+              {title}
+            </Typography>
             <Typography variant="body2" color="text.secondary">
               จัดการข้อมูลทั้งหมด พร้อมตัวกรองและการค้นหา
             </Typography>
           </Box>
-          <Stack direction="row" spacing={1}>
-            <Button variant="outlined" startIcon={<Refresh />} onClick={fetchRows}>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ minWidth: 200 }}>
+            <Button
+              variant="outlined"
+              startIcon={<Refresh />}
+              onClick={fetchRows}
+              sx={{ width: { xs: '100%', md: 'auto' } }}
+            >
               รีเฟรช
             </Button>
-            <Button variant="contained" startIcon={<Add />} onClick={handleOpenCreate}>
+            {enableExport && (
+              <>
+                <Button
+                  variant="outlined"
+                  startIcon={<FileDownload />}
+                  onClick={handleExportExcel}
+                  sx={{ width: { xs: '100%', md: 'auto' } }}
+                >
+                  ส่งออก Excel
+                </Button>
+                <Button
+                  variant="outlined"
+                  startIcon={<PictureAsPdf />}
+                  onClick={handleExportPdf}
+                  sx={{ width: { xs: '100%', md: 'auto' } }}
+                >
+                  ส่งออก PDF
+                </Button>
+              </>
+            )}
+            <Button
+              variant="contained"
+              startIcon={<Add />}
+              onClick={handleOpenCreate}
+              sx={
+                accentColor
+                  ? {
+                      backgroundColor: accentColor,
+                      '&:hover': { backgroundColor: accentColor },
+                      width: { xs: '100%', md: 'auto' }
+                    }
+                  : { width: { xs: '100%', md: 'auto' } }
+              }
+            >
               เพิ่มรายการ
             </Button>
           </Stack>
@@ -609,8 +1611,46 @@ export default function EntityManager({
 
       <Paper sx={{ p: { xs: 1, md: 2 }, border: '1px solid rgba(255,255,255,0.08)' }}>
         {loading ? (
-          <Box sx={{ display: 'grid', placeItems: 'center', minHeight: 240 }}>
-            <CircularProgress color="secondary" />
+          <Box
+            sx={{
+              minHeight: 240,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+              px: { xs: 1, md: 2 },
+              py: { xs: 2, md: 3 },
+              '@keyframes shimmer': {
+                '0%': { backgroundPosition: '-400px 0' },
+                '100%': { backgroundPosition: '400px 0' }
+              }
+            }}
+          >
+            <Typography variant="subtitle2" color="text.secondary">
+              กำลังโหลดข้อมูล...
+            </Typography>
+            {[0, 1, 2, 3, 4].map((index) => (
+              <Box
+                key={index}
+                sx={{
+                  height: 36,
+                  borderRadius: 2,
+                  backgroundImage:
+                    'linear-gradient(90deg, rgba(255,255,255,0.08) 0px, rgba(255,255,255,0.18) 40px, rgba(255,255,255,0.08) 80px)',
+                  backgroundSize: '400px 100%',
+                  animation: 'shimmer 1.2s infinite'
+                }}
+              />
+            ))}
+            <Box
+              sx={{
+                height: 120,
+                borderRadius: 3,
+                backgroundImage:
+                  'linear-gradient(90deg, rgba(255,255,255,0.08) 0px, rgba(255,255,255,0.18) 40px, rgba(255,255,255,0.08) 80px)',
+                backgroundSize: '400px 100%',
+                animation: 'shimmer 1.2s infinite'
+              }}
+            />
           </Box>
         ) : isMdUp ? (
           <TableContainer sx={{ overflowX: 'auto' }}>
@@ -692,12 +1732,18 @@ export default function EntityManager({
                       ))}
                     </Stack>
                     <Divider sx={{ opacity: 0.2 }} />
-                    <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
+                    <Stack
+                      direction={{ xs: 'column', sm: 'row' }}
+                      spacing={1}
+                      justifyContent="flex-end"
+                      flexWrap="wrap"
+                    >
                       <Button
                         size="small"
                         variant="outlined"
                         startIcon={<Edit />}
                         onClick={() => handleOpenEdit(row)}
+                        sx={{ width: { xs: '100%', sm: 'auto' } }}
                       >
                         แก้ไข
                       </Button>
@@ -710,6 +1756,7 @@ export default function EntityManager({
                           setEditingRow(row);
                           setDeleteOpen(true);
                         }}
+                        sx={{ width: { xs: '100%', sm: 'auto' } }}
                       >
                         ลบ
                       </Button>
@@ -739,50 +1786,95 @@ export default function EntityManager({
         )}
       </Paper>
 
-      <Dialog open={formOpen} onClose={handleCloseForm} fullWidth maxWidth="sm">
-        <DialogTitle>{editingRow ? 'แก้ไขรายการ' : 'เพิ่มรายการใหม่'}</DialogTitle>
+      <Dialog
+        open={formOpen}
+        onClose={handleCloseForm}
+        fullWidth
+        maxWidth="md"
+        fullScreen={!isMdUp}
+      >
+        <DialogTitle sx={accentColor ? { color: accentColor } : undefined}>
+          {editingRow ? 'แก้ไขรายการ' : 'เพิ่มรายการใหม่'}
+        </DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
-          {visibleFields.map((field, index) => {
+          {formHeader}
+          <Typography variant="subtitle1" fontWeight={600}>
+            รายละเอียดข้อมูล
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            ช่องที่มีเครื่องหมาย * จำเป็นต้องกรอก
+          </Typography>
+          <Box
+            sx={{
+              display: 'grid',
+              gap: 2,
+              gridTemplateColumns: { xs: 'repeat(1, minmax(0, 1fr))', md: 'repeat(12, minmax(0, 1fr))' }
+            }}
+          >
+            {visibleFields.map((field, index) => {
             const autoFocus = index === 0;
             if (field.type === 'select') {
               const fieldOptions = resolveFieldOptions(field, formValues);
               return (
-                <FormControl key={field.key} fullWidth>
-                  <InputLabel>{field.label}</InputLabel>
-                  <Select
-                    label={field.label}
-                    value={formValues[field.key] ?? ''}
-                    autoFocus={autoFocus}
-                    onChange={(event) =>
-                      setFormValues((prev) => ({ ...prev, [field.key]: event.target.value }))
+                <Box
+                  key={field.key}
+                  sx={{
+                    gridColumn: {
+                      xs: `span ${field.grid?.xs ?? 12}`,
+                      md: `span ${field.grid?.md ?? 6}`
                     }
-                  >
-                    {fieldOptions.map((option) => (
-                      <MenuItem key={String(option.value)} value={String(option.value)}>
-                        {option.label}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                  }}
+                >
+                  <FormControl fullWidth>
+                    <InputLabel>{field.label}</InputLabel>
+                    <Select
+                      label={field.label}
+                      value={formValues[field.key] ?? ''}
+                      autoFocus={autoFocus}
+                      onChange={(event) =>
+                        setFormValues((prev) => ({ ...prev, [field.key]: event.target.value }))
+                      }
+                    >
+                      {fieldOptions.map((option) => (
+                        <MenuItem key={String(option.value)} value={String(option.value)}>
+                          {option.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Box>
               );
             }
 
             if (field.type === 'boolean') {
               return (
-                <FormControl key={field.key} fullWidth>
-                  <InputLabel>{field.label}</InputLabel>
-                  <Select
-                    label={field.label}
-                    value={String(formValues[field.key] ?? '')}
-                    autoFocus={autoFocus}
-                    onChange={(event) =>
-                      setFormValues((prev) => ({ ...prev, [field.key]: event.target.value === 'true' }))
+                <Box
+                  key={field.key}
+                  sx={{
+                    gridColumn: {
+                      xs: `span ${field.grid?.xs ?? 12}`,
+                      md: `span ${field.grid?.md ?? 6}`
                     }
-                  >
-                    <MenuItem value="true">ใช้งาน</MenuItem>
-                    <MenuItem value="false">ไม่ใช้งาน</MenuItem>
-                  </Select>
-                </FormControl>
+                  }}
+                >
+                  <FormControl fullWidth>
+                    <InputLabel>{field.label}</InputLabel>
+                    <Select
+                      label={field.label}
+                      value={String(formValues[field.key] ?? '')}
+                      autoFocus={autoFocus}
+                      onChange={(event) =>
+                        setFormValues((prev) => ({
+                          ...prev,
+                          [field.key]: event.target.value === 'true'
+                        }))
+                      }
+                    >
+                      <MenuItem value="true">ใช้งาน</MenuItem>
+                      <MenuItem value="false">ไม่ใช้งาน</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Box>
               );
             }
 
@@ -792,50 +1884,76 @@ export default function EntityManager({
                 fieldOptions.find((option) => String(option.value) === String(formValues[field.key])) ||
                 null;
               return (
-                <Autocomplete
+                <Box
                   key={field.key}
-                  options={fieldOptions}
-                  getOptionLabel={(option) => option.label}
-                  isOptionEqualToValue={(option, value) => option.value === value.value}
-                  value={selected}
-                  onChange={(_, nextValue) =>
-                    setFormValues((prev) => ({ ...prev, [field.key]: nextValue?.value ?? '' }))
-                  }
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label={field.label}
-                      required={field.required}
-                      fullWidth
-                      autoFocus={autoFocus}
-                    />
-                  )}
-                />
+                  sx={{
+                    gridColumn: {
+                      xs: `span ${field.grid?.xs ?? 12}`,
+                      md: `span ${field.grid?.md ?? 6}`
+                    }
+                  }}
+                >
+                  <Autocomplete
+                    options={fieldOptions}
+                    getOptionLabel={(option) => option.label}
+                    isOptionEqualToValue={(option, value) => option.value === value.value}
+                    value={selected}
+                    onChange={(_, nextValue) =>
+                      setFormValues((prev) => ({ ...prev, [field.key]: nextValue?.value ?? '' }))
+                    }
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label={field.label}
+                        required={field.required}
+                        fullWidth
+                        autoFocus={autoFocus}
+                      />
+                    )}
+                  />
+                </Box>
               );
             }
 
             return (
-              <TextField
+              <Box
                 key={field.key}
-                label={field.label}
-                type={field.type === 'datetime' ? 'datetime-local' : field.type}
-                required={field.required}
-                value={formValues[field.key] ?? ''}
-                autoFocus={autoFocus}
-                onChange={(event) =>
-                  setFormValues((prev) => ({ ...prev, [field.key]: event.target.value }))
-                }
-                fullWidth
-                multiline={field.type === 'textarea'}
-                minRows={field.type === 'textarea' ? 3 : undefined}
-                inputProps={field.type === 'number' ? { step: field.step || '1' } : undefined}
-              />
+                sx={{
+                  gridColumn: {
+                    xs: `span ${field.grid?.xs ?? 12}`,
+                    md: `span ${field.grid?.md ?? (field.type === 'textarea' ? 12 : 6)}`
+                  }
+                }}
+              >
+                <TextField
+                  label={field.label}
+                  type={field.type === 'datetime' ? 'datetime-local' : field.type}
+                  required={field.required}
+                  value={formValues[field.key] ?? ''}
+                  autoFocus={autoFocus}
+                  onChange={(event) =>
+                    setFormValues((prev) => ({ ...prev, [field.key]: event.target.value }))
+                  }
+                  fullWidth
+                  multiline={field.type === 'textarea'}
+                  minRows={field.type === 'textarea' ? 3 : undefined}
+                  inputProps={field.type === 'number' ? { step: field.step || '1' } : undefined}
+                />
+              </Box>
             );
           })}
+          </Box>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={handleCloseForm}>ยกเลิก</Button>
-          <Button variant="contained" onClick={handleSave} disabled={loading}>
+        <DialogActions sx={{ flexDirection: { xs: 'column', sm: 'row' }, gap: 1, p: 2 }}>
+          <Button onClick={handleCloseForm} sx={{ width: { xs: '100%', sm: 'auto' } }}>
+            ยกเลิก
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSave}
+            disabled={loading}
+            sx={{ width: { xs: '100%', sm: 'auto' } }}
+          >
             บันทึก
           </Button>
         </DialogActions>

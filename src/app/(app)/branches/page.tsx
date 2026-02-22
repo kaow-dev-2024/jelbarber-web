@@ -7,6 +7,7 @@ export default function BranchesPage() {
     <EntityManager
       title="สาขา"
       endpoint="branches"
+      enableExport
       columns={[
         { key: 'id', label: 'ID' },
         { key: 'name', label: 'ชื่อสาขา' },

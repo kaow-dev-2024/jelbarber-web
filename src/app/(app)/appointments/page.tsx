@@ -154,23 +154,26 @@ export default function AppointmentsPage() {
           label: 'สาขา',
           type: 'autocomplete',
           options: branchOptions,
-          required: true
+          required: true,
+          grid: { xs: 12, md: 4 }
         },
         {
           key: 'memberId',
           label: 'ลูกค้า',
           type: 'autocomplete',
           options: memberOptions,
-          required: true
+          required: true,
+          grid: { xs: 12, md: 4 }
         },
         {
           key: 'employeeId',
           label: 'ช่าง',
           type: 'autocomplete',
-          options: employeeOptions
+          options: employeeOptions,
+          grid: { xs: 12, md: 4 }
         },
-        { key: 'startAt', label: 'เวลาเริ่ม', type: 'datetime', required: true },
-        { key: 'endAt', label: 'เวลาสิ้นสุด', type: 'datetime', required: true },
+        { key: 'startAt', label: 'เวลาเริ่ม', type: 'datetime', required: true, grid: { xs: 12, md: 6 } },
+        { key: 'endAt', label: 'เวลาสิ้นสุด', type: 'datetime', required: true, grid: { xs: 12, md: 6 } },
         {
           key: 'status',
           label: 'สถานะ',
@@ -179,9 +182,10 @@ export default function AppointmentsPage() {
             { value: 'Booked', label: 'จองไว้' },
             { value: 'Successful', label: 'สำเร็จ' },
             { value: 'Cancelled', label: 'ยกเลิก' }
-          ]
+          ],
+          grid: { xs: 12, md: 6 }
         },
-        { key: 'notes', label: 'หมายเหตุ', type: 'textarea' }
+        { key: 'notes', label: 'หมายเหตุ', type: 'textarea', grid: { xs: 12, md: 12 } }
       ]}
       filters={[
         {

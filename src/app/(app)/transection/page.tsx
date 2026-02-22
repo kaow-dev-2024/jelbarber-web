@@ -1,7 +1,17 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Card, CardContent, Stack, Typography } from '@mui/material';
+import {
+  Box,
+  Card,
+  CardContent,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
+  Stack,
+  Typography
+} from '@mui/material';
 import EntityManager from '@/components/EntityManager';
 import { listEntities } from '@/lib/api';
 import { useAuth } from '@/components/auth/AuthProvider';
@@ -11,6 +21,7 @@ type Option = { value: string | number; label: string };
 export default function TransectionPage() {
   const { token } = useAuth();
   const [branchOptions, setBranchOptions] = useState<Option[]>([]);
+  const [summaryMode, setSummaryMode] = useState<'day' | 'month' | 'year'>('month');
   const categoryOptionsByType = useMemo<Record<string, Option[]>>(
     () => ({
       income: [
@@ -101,10 +112,83 @@ export default function TransectionPage() {
     };
   }, []);
 
+  const summaryRows = useMemo(() => {
+    const formatKey = (value: unknown) => {
+      if (!value) return '';
+      const date = new Date(String(value));
+      if (Number.isNaN(date.getTime())) return '';
+      const yyyy = date.getFullYear();
+      const mm = String(date.getMonth() + 1).padStart(2, '0');
+      const dd = String(date.getDate()).padStart(2, '0');
+      if (summaryMode === 'year') return `${yyyy}`;
+      if (summaryMode === 'month') return `${yyyy}-${mm}`;
+      return `${yyyy}-${mm}-${dd}`;
+    };
+    const formatLabel = (key: string) => {
+      if (!key) return '';
+      if (summaryMode === 'year') return key;
+      if (summaryMode === 'month') {
+        const [y, m] = key.split('-');
+        return `${m}/${y}`;
+      }
+      const [y, m, d] = key.split('-');
+      return `${d}/${m}/${y}`;
+    };
+
+    return (rows: Record<string, unknown>[]) => {
+      const map = new Map<string, { income: number; expense: number; count: number }>();
+      rows.forEach((row) => {
+        const key = formatKey(row.occurredAt);
+        if (!key) return;
+        if (!map.has(key)) map.set(key, { income: 0, expense: 0, count: 0 });
+        const bucket = map.get(key)!;
+        const amountRaw = row.amount;
+        const amount = typeof amountRaw === 'number' ? amountRaw : Number(amountRaw);
+        if (Number.isNaN(amount)) return;
+        bucket.count += 1;
+        if (row.type === 'income') bucket.income += amount;
+        if (row.type === 'expense') bucket.expense += amount;
+      });
+      return Array.from(map.entries())
+        .sort(([a], [b]) => (a > b ? 1 : -1))
+        .map(([key, value]) => ({
+          key,
+          label: formatLabel(key),
+          ...value,
+          net: value.income - value.expense
+        }));
+    };
+  }, [summaryMode]);
+
   return (
     <EntityManager
       title="รายรับ-รายจ่าย"
       endpoint="transection"
+      accentColor="#D9B46C"
+      formHeader={
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+          <Box
+            component="img"
+            src="/icons/icon-pwa.png"
+            alt="JelBarber"
+            sx={{ width: 48, height: 48, borderRadius: 2, border: '1px solid rgba(0,0,0,0.08)' }}
+          />
+          <Box>
+            <Typography variant="subtitle1" fontWeight={700}>
+              JelBarber Studio
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              ฟอร์มบันทึกรายรับ-รายจ่าย
+            </Typography>
+          </Box>
+        </Box>
+      }
+      exportMeta={{
+        title: 'JelBarber Studio',
+        subtitle: 'รายงานรายรับ-รายจ่าย',
+        logoUrl: '/icons/icon-pwa.png',
+        accentColor: '#D9B46C'
+      }}
       columns={[
         { key: 'id', label: 'ID' },
         {
@@ -187,70 +271,91 @@ export default function TransectionPage() {
       ]}
       defaultFilters={defaultFilters}
       summary={(rows) => {
-        let income = 0;
-        let expense = 0;
-        let count = 0;
-        rows.forEach((row) => {
-          const amountRaw = row.amount;
-          const amount = typeof amountRaw === 'number' ? amountRaw : Number(amountRaw);
-          if (Number.isNaN(amount)) return;
-          count += 1;
-          if (row.type === 'income') {
-            income += amount;
-          } else if (row.type === 'expense') {
-            expense += amount;
-          }
-        });
-        const net = income - expense;
         const format = (value: number) =>
           value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const items = summaryRows(rows);
         return (
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-            <Card sx={{ flex: 1, border: '1px solid rgba(255,255,255,0.08)' }}>
-              <CardContent>
-                <Typography variant="body2" color="text.secondary">
-                  รวมรายการ
-                </Typography>
-                <Typography variant="h5">{count.toLocaleString('th-TH')}</Typography>
-              </CardContent>
-            </Card>
-            <Card sx={{ flex: 1, border: '1px solid rgba(255,255,255,0.08)' }}>
-              <CardContent>
-                <Typography variant="body2" color="text.secondary">
-                  รายรับรวม
-                </Typography>
-                <Typography variant="h5" color="success.main">
-                  {format(income)}
-                </Typography>
-              </CardContent>
-            </Card>
-            <Card sx={{ flex: 1, border: '1px solid rgba(255,255,255,0.08)' }}>
-              <CardContent>
-                <Typography variant="body2" color="text.secondary">
-                  รายจ่ายรวม
-                </Typography>
-                <Typography variant="h5" color="error.main">
-                  {format(expense)}
-                </Typography>
-              </CardContent>
-            </Card>
-            <Card sx={{ flex: 1, border: '1px solid rgba(255,255,255,0.08)' }}>
-              <CardContent>
-                <Typography variant="body2" color="text.secondary">
-                  สุทธิ
-                </Typography>
-                <Typography
-                  variant="h5"
-                  color={net >= 0 ? 'success.main' : 'error.main'}
+          <Stack spacing={2}>
+            <Stack
+              direction={{ xs: 'column', md: 'row' }}
+              spacing={2}
+              alignItems={{ xs: 'stretch', md: 'center' }}
+              sx={{ px: { xs: 0.5, sm: 0 }, pb: { xs: 0.5, sm: 0 } }}
+            >
+              <Typography variant="subtitle1" fontWeight={700} sx={{ color: '#D9B46C' }}>
+                สรุปผลตามช่วงเวลา
+              </Typography>
+              <FormControl sx={{ minWidth: 200, px: { xs: 0.5, sm: 0 } }}>
+                <InputLabel>รูปแบบสรุป</InputLabel>
+                <Select
+                  label="รูปแบบสรุป"
+                  value={summaryMode}
+                  onChange={(event) =>
+                    setSummaryMode(event.target.value as 'day' | 'month' | 'year')
+                  }
                 >
-                  {format(net)}
-                </Typography>
-              </CardContent>
-            </Card>
+                  <MenuItem value="day">รายวัน</MenuItem>
+                  <MenuItem value="month">รายเดือน</MenuItem>
+                  <MenuItem value="year">รายปี</MenuItem>
+                </Select>
+              </FormControl>
+            </Stack>
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: {
+                  xs: '1fr',
+                  sm: '1fr 1fr',
+                  lg: 'repeat(4, minmax(200px, 1fr))'
+                },
+                gap: 2,
+                px: { xs: 0.5, sm: 0 }
+              }}
+            >
+              {items.map((item) => (
+                <Card
+                  key={item.key}
+                  sx={{
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    height: '100%'
+                  }}
+                >
+                  <CardContent>
+                    <Typography variant="subtitle2" color="text.secondary">
+                      {item.label || item.key}
+                    </Typography>
+                    <Typography variant="body2">
+                      รวม {item.count.toLocaleString('th-TH')} รายการ
+                    </Typography>
+                    <Typography variant="body2" color="success.main">
+                      รายรับ {format(item.income)}
+                    </Typography>
+                    <Typography variant="body2" color="error.main">
+                      รายจ่าย {format(item.expense)}
+                    </Typography>
+                    <Typography
+                      variant="subtitle1"
+                      sx={{ color: item.net >= 0 ? 'success.main' : 'error.main' }}
+                    >
+                      สุทธิ {format(item.net)}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              ))}
+              {items.length === 0 && (
+                <Card sx={{ border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <CardContent>
+                    <Typography variant="body2" color="text.secondary">
+                      ไม่มีข้อมูลสำหรับช่วงนี้
+                    </Typography>
+                  </CardContent>
+                </Card>
+              )}
+            </Box>
           </Stack>
         );
       }}
-      searchKeys={['note']}
+      searchKeys={['note', 'category']}
     />
   );
 }
