@@ -1,8 +1,8 @@
-const CACHE_NAME = 'jelbarber-v1';
+const CACHE_NAME = 'jelbarber-v2';
 const APP_SHELL = [
   '/',
   '/manifest.json',
-  '/icons/icon.svg'
+  '/icons/icon-pwa.png'
 ];
 
 self.addEventListener('install', (event) => {

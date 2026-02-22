@@ -2,9 +2,9 @@
 
 import React, { useMemo, useState } from 'react';
 import {
+  Autocomplete,
   Box,
   Button,
-  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -36,21 +36,32 @@ import { Add, Delete, Edit, Refresh } from '@mui/icons-material';
 import { createEntity, deleteEntity, listEntities, updateEntity } from '@/lib/api';
 import { useAuth } from '@/components/auth/AuthProvider';
 
-type FieldType = 'text' | 'number' | 'select' | 'datetime' | 'boolean' | 'textarea' | 'password';
+type FieldType =
+  | 'text'
+  | 'number'
+  | 'select'
+  | 'datetime'
+  | 'boolean'
+  | 'textarea'
+  | 'password'
+  | 'autocomplete';
 
 type FieldOption = {
   value: string | number;
   label: string;
 };
 
+type FieldOptionsResolver = (values: Record<string, unknown>) => FieldOption[];
+
 export type FieldConfig = {
   key: string;
   label: string;
   type: FieldType;
-  options?: FieldOption[];
+  options?: FieldOption[] | FieldOptionsResolver;
   required?: boolean;
   step?: string;
   showOn?: 'create' | 'edit' | 'both';
+  sendNullWhenEmpty?: boolean;
 };
 
 export type ColumnConfig = {
@@ -62,8 +73,13 @@ export type ColumnConfig = {
 export type FilterConfig = {
   key: string;
   label: string;
-  type: 'text' | 'select' | 'boolean' | 'number';
-  options?: FieldOption[];
+  type: 'text' | 'select' | 'boolean' | 'number' | 'dateRange' | 'autocomplete';
+  options?: FieldOption[] | FieldOptionsResolver;
+  disabled?: boolean | ((values: Record<string, unknown>) => boolean);
+  onChange?: (
+    value: unknown,
+    values: Record<string, unknown>
+  ) => Record<string, unknown> | void;
 };
 
 export type EntityManagerProps = {
@@ -72,6 +88,11 @@ export type EntityManagerProps = {
   columns: ColumnConfig[];
   formFields: FieldConfig[];
   filters?: FilterConfig[];
+  defaultFilters?: Record<string, unknown>;
+  sortKey?: string;
+  sortOrder?: 'asc' | 'desc';
+  summary?: (rows: Record<string, unknown>[]) => React.ReactNode;
+  defaultFormValues?: Record<string, unknown>;
   searchKeys?: string[];
 };
 
@@ -102,12 +123,45 @@ function fromDateTimeLocal(value: string) {
   return date.toISOString();
 }
 
+function parseDateInput(value: unknown, isEnd: boolean) {
+  if (!value) return null;
+  const date = new Date(`${String(value)}T${isEnd ? '23:59:59.999' : '00:00:00'}`);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function normalizeBoolean(value: unknown) {
+  if (value === true || value === false) return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+    if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  }
+  return null;
+}
+
+function shallowEqualFilters(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>
+) {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key) => a[key] === b[key]);
+}
+
 export default function EntityManager({
   title,
   endpoint,
   columns,
   formFields,
   filters = [],
+  defaultFilters,
+  sortKey = 'id',
+  sortOrder = 'desc',
+  summary,
+  defaultFormValues = {},
   searchKeys = []
 }: EntityManagerProps) {
   const LAZY_PAGE_SIZE = 20;
@@ -118,12 +172,14 @@ export default function EntityManager({
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editingRow, setEditingRow] = useState<Record<string, unknown> | null>(null);
   const [formValues, setFormValues] = useState<Record<string, unknown>>({});
   const [search, setSearch] = useState('');
-  const [filterValues, setFilterValues] = useState<Record<string, unknown>>({});
+  const resolvedDefaultFilters = defaultFilters ?? {};
+  const [filterValues, setFilterValues] = useState<Record<string, unknown>>(resolvedDefaultFilters);
   const [visibleCount, setVisibleCount] = useState(LAZY_PAGE_SIZE);
 
   const visibleFields = useMemo(() => {
@@ -150,9 +206,17 @@ export default function EntityManager({
     fetchRows();
   }, [token]);
 
+  React.useEffect(() => {
+    if (defaultFilters === undefined) return;
+    if (Object.keys(defaultFilters).length === 0) return;
+    setFilterValues((prev) =>
+      shallowEqualFilters(prev, defaultFilters) ? prev : defaultFilters
+    );
+  }, [defaultFilters]);
+
   const handleOpenCreate = () => {
     setEditingRow(null);
-    setFormValues({});
+    setFormValues(defaultFormValues);
     setFormOpen(true);
   };
 
@@ -161,6 +225,33 @@ export default function EntityManager({
     formFields.forEach((field) => {
       if (field.type === 'datetime') {
         nextValues[field.key] = toDateTimeLocal(row[field.key]);
+        return;
+      }
+      if (field.type === 'autocomplete') {
+        const direct = row[field.key];
+        if (direct !== undefined && direct !== null && direct !== '') {
+          nextValues[field.key] = direct;
+          return;
+        }
+        const altKey = `${field.key.charAt(0).toUpperCase()}${field.key.slice(1)}`;
+        const alt = row[altKey];
+        if (alt !== undefined && alt !== null && alt !== '') {
+          nextValues[field.key] = alt;
+          return;
+        }
+        if (field.key.endsWith('Id')) {
+          const baseKey = field.key.slice(0, -2);
+          const embedded =
+            (row[baseKey] as Record<string, unknown> | undefined) ??
+            (row[`${baseKey.charAt(0).toUpperCase()}${baseKey.slice(1)}`] as
+              | Record<string, unknown>
+              | undefined);
+          if (embedded && typeof embedded === 'object' && 'id' in embedded) {
+            nextValues[field.key] = (embedded as { id: unknown }).id;
+            return;
+          }
+        }
+        nextValues[field.key] = '';
       }
     });
     setEditingRow(row);
@@ -183,6 +274,12 @@ export default function EntityManager({
         if (field.type === 'datetime') {
           value = fromDateTimeLocal(String(value || ''));
         }
+        if (field.type === 'autocomplete' && value !== '' && value !== null && value !== undefined) {
+          const numeric = Number(value);
+          if (!Number.isNaN(numeric) && String(value).trim() !== '') {
+            value = numeric;
+          }
+        }
         if (field.type === 'number' && value !== '' && value !== null && value !== undefined) {
           value = Number(value);
         }
@@ -190,13 +287,24 @@ export default function EntityManager({
           if (value === '' || value === undefined || value === null) return;
           value = Boolean(value);
         }
-        if (value !== undefined) payload[field.key] = value;
+        if (value === '' || value === undefined) {
+          if (field.sendNullWhenEmpty) payload[field.key] = null;
+          return;
+        }
+        if (value === null) {
+          if (field.sendNullWhenEmpty) payload[field.key] = null;
+          return;
+        }
+        if (field.type === 'number' && Number.isNaN(value)) return;
+        payload[field.key] = value;
       });
 
       if (editingRow?.id) {
         await updateEntity(endpoint, token, Number(editingRow.id), payload);
+        setSuccess('อัปเดตสำเร็จ');
       } else {
         await createEntity(endpoint, token, payload);
+        setSuccess('สร้างสำเร็จ');
       }
       await fetchRows();
       setFormOpen(false);
@@ -212,6 +320,7 @@ export default function EntityManager({
     try {
       setLoading(true);
       await deleteEntity(endpoint, token, Number(editingRow.id));
+      setSuccess('ลบสำเร็จ');
       await fetchRows();
       setDeleteOpen(false);
       setEditingRow(null);
@@ -220,6 +329,21 @@ export default function EntityManager({
     } finally {
       setLoading(false);
     }
+  };
+
+  const resolveFieldOptions = (field: FieldConfig, values: Record<string, unknown>) => {
+    if (!field.options) return [];
+    return typeof field.options === 'function' ? field.options(values) : field.options;
+  };
+
+  const resolveFilterOptions = (filter: FilterConfig, values: Record<string, unknown>) => {
+    if (!filter.options) return [];
+    return typeof filter.options === 'function' ? filter.options(values) : filter.options;
+  };
+
+  const resolveFilterDisabled = (filter: FilterConfig, values: Record<string, unknown>) => {
+    if (filter.disabled === undefined) return false;
+    return typeof filter.disabled === 'function' ? filter.disabled(values) : Boolean(filter.disabled);
   };
 
   const filteredRows = useMemo(() => {
@@ -236,11 +360,30 @@ export default function EntityManager({
       }
 
       for (const filter of filters) {
+        const rowValue = row[filter.key];
+        if (filter.type === 'dateRange') {
+          const fromValue = filterValues[`${filter.key}From`];
+          const toValue = filterValues[`${filter.key}To`];
+          if (!fromValue && !toValue) continue;
+          const rowDate = new Date(String(rowValue));
+          if (Number.isNaN(rowDate.getTime())) return false;
+          const fromDate = parseDateInput(fromValue, false);
+          const toDate = parseDateInput(toValue, true);
+          if (fromDate && rowDate < fromDate) return false;
+          if (toDate && rowDate > toDate) return false;
+          continue;
+        }
+
         const value = filterValues[filter.key];
         if (value === '' || value === undefined || value === null) continue;
-        const rowValue = row[filter.key];
         if (filter.type === 'boolean') {
-          if (String(rowValue) !== String(value)) return false;
+          const rowBool = normalizeBoolean(rowValue);
+          const filterBool = normalizeBoolean(value);
+          if (rowBool === null || filterBool === null) {
+            if (String(rowValue) !== String(value)) return false;
+          } else if (rowBool !== filterBool) {
+            return false;
+          }
         } else if (filter.type === 'number') {
           if (Number(rowValue) !== Number(value)) return false;
         } else if (filter.type === 'text') {
@@ -257,9 +400,36 @@ export default function EntityManager({
     setVisibleCount(Math.min(LAZY_PAGE_SIZE, filteredRows.length));
   }, [filteredRows.length]);
 
+  const sortedRows = useMemo(() => {
+    if (!sortKey) return filteredRows;
+    const nextRows = [...filteredRows];
+    const direction = sortOrder === 'desc' ? -1 : 1;
+    nextRows.sort((a, b) => {
+      const aValue = a[sortKey];
+      const bValue = b[sortKey];
+      if (aValue === null || aValue === undefined) return 1 * direction;
+      if (bValue === null || bValue === undefined) return -1 * direction;
+
+      const aNum = Number(aValue);
+      const bNum = Number(bValue);
+      if (!Number.isNaN(aNum) && !Number.isNaN(bNum)) {
+        return (aNum - bNum) * direction;
+      }
+
+      const aDate = new Date(String(aValue));
+      const bDate = new Date(String(bValue));
+      if (!Number.isNaN(aDate.getTime()) && !Number.isNaN(bDate.getTime())) {
+        return (aDate.getTime() - bDate.getTime()) * direction;
+      }
+
+      return String(aValue).localeCompare(String(bValue)) * direction;
+    });
+    return nextRows;
+  }, [filteredRows, sortKey, sortOrder]);
+
   const visibleRows = useMemo(
-    () => filteredRows.slice(0, visibleCount),
-    [filteredRows, visibleCount]
+    () => sortedRows.slice(0, visibleCount),
+    [sortedRows, visibleCount]
   );
 
   return (
@@ -291,6 +461,7 @@ export default function EntityManager({
           />
           {filters.map((filter) => {
             if (filter.type === 'text' || filter.type === 'number') {
+              const disabled = resolveFilterDisabled(filter, filterValues);
               return (
                 <TextField
                   key={filter.key}
@@ -298,25 +469,106 @@ export default function EntityManager({
                   type={filter.type === 'number' ? 'number' : 'text'}
                   value={filterValues[filter.key] ?? ''}
                   onChange={(event) =>
-                    setFilterValues((prev) => ({ ...prev, [filter.key]: event.target.value }))
+                    setFilterValues((prev) => {
+                      const next = { ...prev, [filter.key]: event.target.value };
+                      const extra = filter.onChange?.(event.target.value, next);
+                      return extra ? { ...next, ...extra } : next;
+                    })
                   }
                   sx={{ minWidth: 160 }}
+                  disabled={disabled}
                 />
               );
             }
 
+            if (filter.type === 'dateRange') {
+              const fromKey = `${filter.key}From`;
+              const toKey = `${filter.key}To`;
+              const disabled = resolveFilterDisabled(filter, filterValues);
+              return (
+                <Stack key={filter.key} direction={{ xs: 'column', md: 'row' }} spacing={1}>
+                  <TextField
+                    label={`${filter.label} (เริ่ม)`}
+                    type="date"
+                  value={filterValues[fromKey] ?? ''}
+                  onChange={(event) =>
+                    setFilterValues((prev) => {
+                      const next = { ...prev, [fromKey]: event.target.value };
+                      const extra = filter.onChange?.(event.target.value, next);
+                      return extra ? { ...next, ...extra } : next;
+                    })
+                  }
+                  sx={{ minWidth: 160 }}
+                  InputLabelProps={{ shrink: true }}
+                  disabled={disabled}
+                />
+                  <TextField
+                    label={`${filter.label} (สิ้นสุด)`}
+                  type="date"
+                  value={filterValues[toKey] ?? ''}
+                  onChange={(event) =>
+                    setFilterValues((prev) => {
+                      const next = { ...prev, [toKey]: event.target.value };
+                      const extra = filter.onChange?.(event.target.value, next);
+                      return extra ? { ...next, ...extra } : next;
+                    })
+                  }
+                  sx={{ minWidth: 160 }}
+                  InputLabelProps={{ shrink: true }}
+                  disabled={disabled}
+                />
+                </Stack>
+              );
+            }
+
+            if (filter.type === 'autocomplete') {
+              const filterOptions = resolveFilterOptions(filter, filterValues);
+              const disabled = resolveFilterDisabled(filter, filterValues);
+              const selected =
+                filterOptions.find(
+                  (option) => String(option.value) === String(filterValues[filter.key])
+                ) || null;
+              return (
+                <Autocomplete
+                  key={filter.key}
+                  options={filterOptions}
+                  getOptionLabel={(option) => option.label}
+                  isOptionEqualToValue={(option, value) => option.value === value.value}
+                  value={selected}
+                  disabled={disabled}
+                  onChange={(_, nextValue) =>
+                    setFilterValues((prev) => {
+                      const value = nextValue?.value ?? '';
+                      const next = { ...prev, [filter.key]: value };
+                      const extra = filter.onChange?.(value, next);
+                      return extra ? { ...next, ...extra } : next;
+                    })
+                  }
+                  renderInput={(params) => (
+                    <TextField {...params} label={filter.label} fullWidth sx={{ minWidth: 200 }} />
+                  )}
+                />
+              );
+            }
+
+            const disabled = resolveFilterDisabled(filter, filterValues);
             return (
               <FormControl key={filter.key} sx={{ minWidth: 160 }}>
                 <InputLabel>{filter.label}</InputLabel>
                 <Select
                   label={filter.label}
                   value={filterValues[filter.key] ?? ''}
+                  disabled={disabled}
                   onChange={(event) =>
-                    setFilterValues((prev) => ({ ...prev, [filter.key]: event.target.value }))
+                    setFilterValues((prev) => {
+                      const next = { ...prev, [filter.key]: event.target.value };
+                      const extra = filter.onChange?.(event.target.value, next);
+                      return extra ? { ...next, ...extra } : next;
+                    })
                   }
                 >
                   <MenuItem value="">ทั้งหมด</MenuItem>
-                  {filter.options?.map((option) => (
+                  {resolveFilterOptions(filter, filterValues).map((option) => (
                     <MenuItem key={String(option.value)} value={String(option.value)}>
                       {option.label}
                     </MenuItem>
@@ -327,6 +579,33 @@ export default function EntityManager({
           })}
         </Stack>
       </Paper>
+
+      <Box>
+        {summary ? (
+          summary(filteredRows)
+        ) : (
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+            <Card sx={{ flex: 1, border: '1px solid rgba(255,255,255,0.08)' }}>
+              <CardContent>
+                <Typography variant="body2" color="text.secondary">
+                  ทั้งหมด
+                </Typography>
+                <Typography variant="h5">{rows.length.toLocaleString('th-TH')}</Typography>
+              </CardContent>
+            </Card>
+            <Card sx={{ flex: 1, border: '1px solid rgba(255,255,255,0.08)' }}>
+              <CardContent>
+                <Typography variant="body2" color="text.secondary">
+                  ตามเงื่อนไข
+                </Typography>
+                <Typography variant="h5">
+                  {filteredRows.length.toLocaleString('th-TH')}
+                </Typography>
+              </CardContent>
+            </Card>
+          </Stack>
+        )}
+      </Box>
 
       <Paper sx={{ p: { xs: 1, md: 2 }, border: '1px solid rgba(255,255,255,0.08)' }}>
         {loading ? (
@@ -406,9 +685,9 @@ export default function EntityManager({
                           <Typography variant="caption" color="text.secondary" sx={{ minWidth: 120 }}>
                             {column.label}
                           </Typography>
-                          <Typography variant="body2">
+                          <Box sx={{ typography: 'body2' }}>
                             {column.render ? column.render(row) : renderValue(row[column.key])}
-                          </Typography>
+                          </Box>
                         </Stack>
                       ))}
                     </Stack>
@@ -463,19 +742,22 @@ export default function EntityManager({
       <Dialog open={formOpen} onClose={handleCloseForm} fullWidth maxWidth="sm">
         <DialogTitle>{editingRow ? 'แก้ไขรายการ' : 'เพิ่มรายการใหม่'}</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
-          {visibleFields.map((field) => {
+          {visibleFields.map((field, index) => {
+            const autoFocus = index === 0;
             if (field.type === 'select') {
+              const fieldOptions = resolveFieldOptions(field, formValues);
               return (
                 <FormControl key={field.key} fullWidth>
                   <InputLabel>{field.label}</InputLabel>
                   <Select
                     label={field.label}
                     value={formValues[field.key] ?? ''}
+                    autoFocus={autoFocus}
                     onChange={(event) =>
                       setFormValues((prev) => ({ ...prev, [field.key]: event.target.value }))
                     }
                   >
-                    {field.options?.map((option) => (
+                    {fieldOptions.map((option) => (
                       <MenuItem key={String(option.value)} value={String(option.value)}>
                         {option.label}
                       </MenuItem>
@@ -492,6 +774,7 @@ export default function EntityManager({
                   <Select
                     label={field.label}
                     value={String(formValues[field.key] ?? '')}
+                    autoFocus={autoFocus}
                     onChange={(event) =>
                       setFormValues((prev) => ({ ...prev, [field.key]: event.target.value === 'true' }))
                     }
@@ -503,6 +786,34 @@ export default function EntityManager({
               );
             }
 
+            if (field.type === 'autocomplete') {
+              const fieldOptions = resolveFieldOptions(field, formValues);
+              const selected =
+                fieldOptions.find((option) => String(option.value) === String(formValues[field.key])) ||
+                null;
+              return (
+                <Autocomplete
+                  key={field.key}
+                  options={fieldOptions}
+                  getOptionLabel={(option) => option.label}
+                  isOptionEqualToValue={(option, value) => option.value === value.value}
+                  value={selected}
+                  onChange={(_, nextValue) =>
+                    setFormValues((prev) => ({ ...prev, [field.key]: nextValue?.value ?? '' }))
+                  }
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label={field.label}
+                      required={field.required}
+                      fullWidth
+                      autoFocus={autoFocus}
+                    />
+                  )}
+                />
+              );
+            }
+
             return (
               <TextField
                 key={field.key}
@@ -510,6 +821,7 @@ export default function EntityManager({
                 type={field.type === 'datetime' ? 'datetime-local' : field.type}
                 required={field.required}
                 value={formValues[field.key] ?? ''}
+                autoFocus={autoFocus}
                 onChange={(event) =>
                   setFormValues((prev) => ({ ...prev, [field.key]: event.target.value }))
                 }
@@ -543,6 +855,12 @@ export default function EntityManager({
       <Snackbar open={Boolean(error)} autoHideDuration={4000} onClose={() => setError(null)}>
         <Alert severity="error" variant="filled" onClose={() => setError(null)}>
           {error}
+        </Alert>
+      </Snackbar>
+
+      <Snackbar open={Boolean(success)} autoHideDuration={3000} onClose={() => setSuccess(null)}>
+        <Alert severity="success" variant="filled" onClose={() => setSuccess(null)}>
+          {success}
         </Alert>
       </Snackbar>
     </Box>
@@ -580,11 +898,40 @@ export function StatusChip({ value }: { value: string }) {
     refunded: 'คืนเงิน'
   };
 
+  const backgroundMap: Record<string, string> = {
+    warning: 'rgba(255, 193, 7, 0.2)',
+    success: 'rgba(46, 204, 113, 0.2)',
+    error: 'rgba(231, 76, 60, 0.2)',
+    default: 'rgba(255,255,255,0.12)'
+  };
+
+  const textColorMap: Record<string, string> = {
+    warning: '#f7c942',
+    success: '#3ddc84',
+    error: '#ff6b6b',
+    default: '#cbd5e1'
+  };
+
+  const tone = colorMap[value] || 'default';
+
   return (
-    <Chip
-      label={labelMap[value] || value}
-      color={colorMap[value] || 'default'}
-      size="small"
-    />
+    <Box
+      component="span"
+      sx={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        px: 1,
+        py: 0.25,
+        borderRadius: 999,
+        fontSize: '0.75rem',
+        lineHeight: 1.4,
+        fontWeight: 600,
+        backgroundColor: backgroundMap[tone],
+        color: textColorMap[tone],
+        border: '1px solid rgba(255,255,255,0.12)'
+      }}
+    >
+      {labelMap[value] || value}
+    </Box>
   );
 }

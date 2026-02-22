@@ -18,7 +18,14 @@ const sourceSerif = Source_Serif_4({
 export const metadata: Metadata = {
   title: 'JelBarber Shop',
   description: 'ระบบบริหารจัดการร้านตัดผม',
-  manifest: '/manifest.json'
+  manifest: '/manifest.json',
+  icons: {
+    icon: [
+      { url: '/icons/icon-pwa.png', type: 'image/png', sizes: '512x512' }
+    ],
+    apple: '/icons/icon-pwa.png',
+    shortcut: '/icons/icon-pwa.png'
+  }
 };
 
 export const viewport = {

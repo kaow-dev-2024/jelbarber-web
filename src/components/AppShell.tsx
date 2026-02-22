@@ -30,7 +30,7 @@ import { useTheme } from '@mui/material/styles';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth/AuthProvider';
 
-const drawerWidth = 260;
+const drawerWidth = 220;
 
 const navItems = [
   { label: 'แดชบอร์ด', href: '/dashboard', icon: <Dashboard /> },
@@ -57,7 +57,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const drawerContent = (
     <>
       <Toolbar />
-      <Box sx={{ px: 2, py: 3 }}>
+      <Box sx={{ px: 3, py: 3 }}>
         <Typography variant="subtitle2" color="text.secondary">
           เมนูหลัก
         </Typography>
@@ -111,10 +111,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               </IconButton>
             )}
             <Box>
-              <Typography variant="h4">JelBarber Shop</Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography variant="h5">JelBarber Shop</Typography>
+              {/* <Typography variant="caption" color="text.secondary">
                 ศูนย์ควบคุมร้าน
-              </Typography>
+              </Typography> */}
             </Box>
           </Stack>
           <Button
@@ -165,7 +165,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         component="main"
         sx={{
           flexGrow: 1,
-          p: { xs: 2, md: 4 },
+          p: 0,
           minHeight: '100vh',
           marginLeft: { xs: 0, md: `${drawerWidth}px` },
           pt: { xs: 10, md: 12 }

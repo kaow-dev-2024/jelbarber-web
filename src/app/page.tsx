@@ -7,15 +7,12 @@ import { useAuth } from '@/components/auth/AuthProvider';
 
 export default function HomePage() {
   const router = useRouter();
-  const { token } = useAuth();
+  const { token, ready } = useAuth();
 
   useEffect(() => {
-    if (token) {
-      router.replace('/dashboard');
-    } else {
-      router.replace('/login');
-    }
-  }, [token, router]);
+    if (!ready) return;
+    router.replace(token ? '/dashboard' : '/login');
+  }, [token, ready, router]);
 
   return (
     <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>

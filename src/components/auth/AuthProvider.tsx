@@ -12,6 +12,7 @@ export type AuthUser = {
 type AuthContextValue = {
   token: string | null;
   user: AuthUser | null;
+  ready: boolean;
   login: (token: string) => void;
   logout: () => void;
 };
@@ -51,6 +52,7 @@ function setStoredToken(token: string | null) {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const stored = getStoredToken();
@@ -58,21 +60,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setToken(stored);
       setUser(decodeJwt(stored));
     }
+    setReady(true);
   }, []);
 
   const login = useCallback((nextToken: string) => {
     setStoredToken(nextToken);
     setToken(nextToken);
     setUser(decodeJwt(nextToken));
+    setReady(true);
   }, []);
 
   const logout = useCallback(() => {
     setStoredToken(null);
     setToken(null);
     setUser(null);
+    setReady(true);
   }, []);
 
-  const value = useMemo(() => ({ token, user, login, logout }), [token, user, login, logout]);
+  const value = useMemo(
+    () => ({ token, user, ready, login, logout }),
+    [token, user, ready, login, logout]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

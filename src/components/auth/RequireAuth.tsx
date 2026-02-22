@@ -6,16 +6,16 @@ import { Box, CircularProgress } from '@mui/material';
 import { useAuth } from './AuthProvider';
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { token } = useAuth();
+  const { token, ready } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!token) {
+    if (ready && !token) {
       router.replace('/login');
     }
-  }, [token, router]);
+  }, [token, ready, router]);
 
-  if (!token) {
+  if (!ready || !token) {
     return (
       <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
         <CircularProgress color="secondary" />

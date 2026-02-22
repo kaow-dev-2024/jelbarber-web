@@ -1,6 +1,6 @@
 import { AuthUser } from '@/components/auth/AuthProvider';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://192.168.0.205:4000/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000/api';
 
 export class ApiError extends Error {
   status: number;
@@ -68,6 +68,8 @@ export type ListEntitiesOptions = {
   limit?: number;
   offset?: number;
   page?: number;
+  sort?: string;
+  order?: 'asc' | 'desc';
 };
 
 export async function listEntities<T extends EntityRecord>(
@@ -79,6 +81,10 @@ export async function listEntities<T extends EntityRecord>(
   if (typeof options.limit === 'number') params.set('limit', String(options.limit));
   if (typeof options.offset === 'number') params.set('offset', String(options.offset));
   if (typeof options.page === 'number') params.set('page', String(options.page));
+  const sort = options.sort ?? 'id';
+  const order = options.order ?? 'desc';
+  if (sort) params.set('sort', sort);
+  if (order) params.set('order', order);
   const query = params.toString();
   return apiFetch<T[]>(`/${endpoint}${query ? `?${query}` : ''}`, { token });
 }
